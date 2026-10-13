@@ -1,0 +1,10 @@
+# Robô QuickSight — Python 3.13
+# Instalação: pip install -r requirements.txt
+# Navegador: usa o Google Chrome instalado (channel: chrome); não é preciso rodar "playwright install".
+
+playwright==1.63.0      # navegação no QuickSight
+PyYAML==6.0.3           # leitura do config.yaml
+xlsxwriter==3.2.9       # grava o Excel que o SQL lê (driver ACE OLEDB)
+openpyxl==3.1.5         # leitura de planilhas
+keyring==25.7.0         # login por senha (Cofre do Windows), hoje desligado
+pyotp==2.10.0           # código de verificação do login por senha, hoje desligado

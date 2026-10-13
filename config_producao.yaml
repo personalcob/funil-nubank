@@ -1,0 +1,209 @@
+# ==========================================================================
+# Robô de download do QuickSight — configuração de PRODUÇÃO (config_producao.yaml)
+# Campos que VOCÊ precisa preencher estão marcados com  ">>> PREENCHER".
+# Todo o resto já está pronto.
+# ==========================================================================
+
+quicksight:
+  # Página aberta no "login manual" (Passo 3.5): o dashboard CC, sem o pedaço "?state=..."
+  start_url: 'https://us-east-1.quicksight.aws.amazon.com/sn/account/nu-qs-prod/dashboards/9cfea017-182f-41e4-95e4-fd0c3abf7969/sheets/9cfea017-182f-41e4-95e4-fd0c3abf7969_4fb635df-ad32-4132-b6b1-909489e3d972'
+  # Login corporativo (Okta + verificação): o robô NÃO digita senha.
+  # Você entra uma vez à mão (--login-manual) e o robô reaproveita essa sessão.
+  login_mode: none
+  account_name: 'mikael.santos388.personal-cob'   # não usado no modo none
+  credential_service: quicksight_robo
+
+browser:
+  headless: true
+  channel: chrome
+  proxy: null
+  locale: pt-BR
+  timezone: America/Sao_Paulo
+  viewport: {width: 1920, height: 1080}
+  slow_mo_ms: 0
+  default_timeout_s: 60
+  navigation_timeout_s: 90
+  login_timeout_s: 120
+  dashboard_load_timeout_s: 180
+  loading_timeout_s: 90
+  download_timeout_s: 300
+
+# As pastas staging, logs e sessao são as do próprio projeto (criadas no Passo 2.1).
+paths:
+  # >>> PRODUÇÃO: o robô grava direto nos arquivos oficiais ('destination' de cada export, em ...\\PAGAMENTOS\\MAIO)
+  # >>> e guarda uma cópia de cada publicação em archive_dir (...\\PAGAMENTOS\\HISTORICO).
+  # >>> Para voltar ao modo TESTE use o config.yaml (ele tem 'destino_alternativo' e 'publicar_na_rede: false').
+  publicar_na_rede: true
+  # destino_alternativo: NÃO usar em produção (se existir, o robô grava ali e NÃO nos arquivos oficiais)
+  archive_dir: '\\10.10.2.55\planejamento\0. Time Plan - Mis (Lucas,Mikas,Pam e Italo)\02. Mikas\NUBANK\PAGAMENTOS\HISTORICO'
+  archive_retention_days: 60
+
+retry:
+  attempts: 3
+  wait_s: 60
+
+alerts:
+  webhook_url: null
+
+# Opcional: dias que NÃO contam como úteis (além de sábado/domingo). Use as MESMAS datas da lista
+# @FERIADOS do SQL, e só se lá @CONSIDERAR_FERIADOS = 1. Ex.: ['2026-09-07', '2026-10-12']
+periodo:
+  feriados: ['2026-01-01','2026-02-16','2026-02-17','2026-04-03','2026-04-21','2026-05-01','2026-06-04','2026-09-07','2026-10-12','2026-11-02','2026-11-15','2026-11-20','2026-12-25','2027-01-01','2027-02-08','2027-02-09','2027-03-26','2027-04-21','2027-05-01','2027-05-27','2027-09-07','2027-10-12','2027-11-02','2027-11-15','2027-11-20','2027-12-25']
+
+# --------------------------------------------------------------------------
+# Um bloco por arquivo que a consulta SQL consome.
+# Os "passos" abaixo repetem, na ordem, os cliques que você fez na gravação.
+#   {mes_atual} e {mes_anterior} viram AAAA-MM-01 sozinhos (mesma regra do SQL:
+#   mês atual = mês de ontem). Ex.: hoje 29/09 -> 2026-09-01 e 2026-08-01.
+#   name: 'texto'     = o nome do botão CONTÉM esse texto
+#   name: 're:^texto' = expressão regular (para nomes que mudam)
+#   optional: true    = se o botão não aparecer, o robô segue sem erro
+# --------------------------------------------------------------------------
+exports:
+  - name: pagamentos_CC
+    # DOWNLOAD INCREMENTAL (padrão; para desligar neste export: skip_closed_months: false)
+    #   Mês FECHADO = o arquivo já publicado tem linhas dele e a data máxima do arquivo chegou ao último dia do mês.
+    #   Mês fechado NÃO é baixado de novo (sai do arquivo antigo). Mês defasado ou ausente é baixado e SUBSTITUI o antigo.
+    #   Se todos os meses estão fechados, o robô nem abre o navegador. Para forçar tudo: python qs_download.py --baixar-tudo
+    dashboard_url: 'https://us-east-1.quicksight.aws.amazon.com/sn/account/nu-qs-prod/dashboards/9cfea017-182f-41e4-95e4-fd0c3abf7969/sheets/9cfea017-182f-41e4-95e4-fd0c3abf7969_4fb635df-ad32-4132-b6b1-909489e3d972'
+    sheet_tab: null
+    visual_title: 'Tabela'
+    export_format: csv              # o menu do dashboard exporta CSV; o robô converte para Excel (aba Planilha1)
+
+    # O arquivo publicado guarda TRÊS meses (retrasado, anterior e atual), como o LL: assim dá para rodar também o
+    # comparativo do fechamento anterior (ex.: setembro x agosto) depois que outubro começa. Mês fechado não é baixado de novo.
+
+    # Considera o dashboard pronto quando o botão "Controles" aparece
+    ready: {role: button, name: 'Controles'}
+
+    # mes: anterior|atual        = a que mês o passo pertence (usado para pular mês já fechado)
+    # fallback_mes_anterior: true = se ESTE passo não achar o elemento, o mês atual ainda não existe no dashboard:
+    #                               o robô refaz tudo com o mês anterior como base (ex.: 2026-08 e 2026-09), para o
+    #                               arquivo publicado ter sempre DOIS meses. Em qualquer outro passo, o robô para com erro.
+    steps:
+      - {desc: 'Fechar aviso de atualização (se aparecer)', role: button, name: 'Close', optional: true, timeout_s: 3}
+      - {desc: 'Abrir Controles', role: button, name: 'Controles'}
+      # Filtro da ORIGEM do pagamento (payment_type): precisa estar em TODOS (a consulta usa direct e indiretos).
+      - {desc: 'Abrir o filtro de tipo de pagamento', role: button, name: 're:^payment_type (equals|Opções)'}
+      - {desc: 'Marcar todos os tipos de pagamento', action: marcar_todos}
+      - {desc: 'Fechar o filtro de tipo', action: press, key: Escape}
+      - {desc: 'Abrir o seletor de month', role: button, name: 're:^month equals'}
+      - {desc: 'Limpar filtros anteriores (toggle "Selecionar todos")', action: limpar_filtros}
+      - {desc: 'Buscar o mês retrasado', mes: retrasado, action: fill, role: combobox, name: 're:^Search value', value: '{mes_retrasado_busca}'}
+      - {desc: 'Marcar o mês retrasado', mes: retrasado, action: check, role: checkbox, name: '{mes_retrasado_curto}'}
+      - {desc: 'Buscar o mês anterior', mes: anterior, action: fill, role: combobox, name: 're:^Search value', value: '{mes_anterior_busca}'}
+      - {desc: 'Marcar o mês anterior', mes: anterior, action: check, role: checkbox, name: '{mes_anterior_curto}'}
+      - {desc: 'Buscar o mês atual', mes: atual, action: fill, role: combobox, name: 're:^Search value', value: '{mes_atual_busca}'}
+      - {desc: 'Marcar o mês atual', mes: atual, fallback_mes_anterior: true, action: check, role: checkbox, name: '{mes_atual_curto}', wait_loading: true}
+      - {desc: 'Aplicar, se existir botão', role: button, name: 're:^(Aplicar|Apply)$', optional: true, timeout_s: 1}
+      - {desc: 'Fechar o seletor', action: press, key: Escape, wait_loading: true}
+
+    export_steps:
+      - {desc: 'Passar o mouse na tabela (mostra o menu ...)', action: hover, role: button, name: 'Tabela, Soma of'}
+      - {desc: 'Abrir o menu ... da tabela', role: button, name: 'Opções de menu, Soma of'}
+      - {desc: 'Exportar para CSV', role: menuitem, name: 'Exportar para CSV'}
+
+    destination: '\\10.10.2.55\planejamento\0. Time Plan - Mis (Lucas,Mikas,Pam e Italo)\02. Mikas\NUBANK\PAGAMENTOS\MAIO\pagamentos_CC_122.xlsx'
+    rename_sheet_to: Planilha1
+    header_row: 1
+    min_rows: 1
+    required_columns: [customer__id, collection__id, payment_type, new_old, date, total_payment, finance_days_late_bucket]
+    # Confere o filtro de tipo: o download precisa ter pelo menos 2 valores distintos em payment_type (senão para, sem publicar)
+    type_column: payment_type
+    min_distinct_types: 2
+    freshness_column: date
+    freshness_max_age_days: 4
+    freshness_action: warn
+    # Confere se o arquivo trouxe os DOIS meses (a consulta SQL precisa dos dois)
+    months_column: date
+    months_action: warn             # depois de calibrado, troque para: fail
+
+  - name: pagamentos_LL
+    # DOWNLOAD INCREMENTAL (padrão; para desligar neste export: skip_closed_months: false)
+    #   Mês FECHADO = o arquivo já publicado tem linhas dele e a data máxima do arquivo chegou ao último dia do mês.
+    #   Mês fechado NÃO é baixado de novo (sai do arquivo antigo). Mês defasado ou ausente é baixado e SUBSTITUI o antigo.
+    #   Se todos os meses estão fechados, o robô nem abre o navegador. Para forçar tudo: python qs_download.py --baixar-tudo
+    # Link do LL (aba "..._61397bb3..." do mesmo dashboard). Confirme se é este mesmo.
+    dashboard_url: 'https://us-east-1.quicksight.aws.amazon.com/sn/account/nu-qs-prod/dashboards/9cfea017-182f-41e4-95e4-fd0c3abf7969/sheets/9cfea017-182f-41e4-95e4-fd0c3abf7969_61397bb3-0cb7-41fb-b01d-38439d23b2b4'
+    sheet_tab: null
+    visual_title: 'Pagamentos LL'
+    export_format: csv              # o menu do dashboard exporta CSV; o robô converte para Excel (aba Planilha1)
+
+    # Considera o dashboard pronto quando o botão "Controles" aparece
+    ready: {role: button, name: 'Controles'}
+
+    # PASSOS DO LL — gravados no dashboard do LL (gravacao_ll.py) e conferidos no HTML da tela.
+    # Diferenças em relação ao CC:
+    #   - o botão do seletor se chama "month Opções – month ..." (no CC era "month equals ...");
+    #   - o texto de cada mês é "2026-09" (no CC é "2026-09-01");
+    #   - a lista tem ~34 meses (desde 2024-01) e só desenha os que estão na tela: por isso usa o campo de
+    #     busca ("Search value, N options available"), igual ao CC, e NÃO a rolagem do mouse;
+    #   - o gravador clicou num elemento de id dinâmico (#select-34) para fechar; aqui usa Escape, como no CC;
+    #   - baixa TRÊS meses (retrasado, anterior e atual): o LL já pode ter outubro enquanto o CC ainda está em
+    #     setembro, e a consulta compara pelo mês do último pagamento do CC. Com os três, o arquivo cobre os dois casos
+    #     (agosto+setembro ou setembro+outubro). Mês a mais no arquivo não atrapalha: a consulta filtra por data.
+    # mes: anterior|atual         = a que mês o passo pertence (usado para pular mês já fechado)
+    # fallback_mes_anterior: true = se ESTE passo não achar o elemento, o mês atual ainda não existe no dashboard:
+    #                               o robô refaz tudo com o mês anterior como base (ex.: 2026-08 e 2026-09), para o
+    #                               arquivo publicado ter sempre DOIS meses. Em qualquer outro passo, o robô para com erro.
+    steps:
+      - {desc: 'Fechar aviso de atualização (se aparecer)', role: button, name: 'Close', optional: true, timeout_s: 3}
+      - {desc: 'Abrir Controles', role: button, name: 'Controles'}
+      # Filtro da ORIGEM do pagamento (deal_type): precisa estar em TODOS; o 'not-commissioned' é descartado depois, no arquivo.
+      - {desc: 'Abrir o filtro de tipo de pagamento', role: button, name: 're:^deal_type Opções'}
+      - {desc: 'Marcar todos os tipos de pagamento', action: marcar_todos}
+      - {desc: 'Fechar o filtro de tipo', action: press, key: Escape}
+      - {desc: 'Abrir o seletor de month', role: button, name: 're:^month Opções'}
+      - {desc: 'Limpar filtros anteriores (toggle "Selecionar todos")', action: limpar_filtros}
+      - {desc: 'Buscar o mês retrasado', mes: retrasado, action: fill, role: combobox, name: 're:^Search value', value: '{mes_retrasado_busca}'}
+      - {desc: 'Marcar o mês retrasado', mes: retrasado, action: check, role: checkbox, name: '{mes_retrasado_busca}'}
+      - {desc: 'Buscar o mês anterior', mes: anterior, action: fill, role: combobox, name: 're:^Search value', value: '{mes_anterior_busca}'}
+      - {desc: 'Marcar o mês anterior', mes: anterior, action: check, role: checkbox, name: '{mes_anterior_busca}'}
+      - {desc: 'Buscar o mês atual', mes: atual, action: fill, role: combobox, name: 're:^Search value', value: '{mes_atual_busca}'}
+      - {desc: 'Marcar o mês atual', mes: atual, fallback_mes_anterior: true, action: check, role: checkbox, name: '{mes_atual_busca}', wait_loading: true}
+      - {desc: 'Fechar o seletor', action: press, key: Escape, wait_loading: true}
+
+    # Exportação: igual à do CC (já funcionou no LL: a tabela tem os mesmos nomes)
+    export_steps:
+      - {desc: 'Passar o mouse na tabela (mostra o menu ...)', action: hover, role: button, name: 'Tabela, Soma of'}
+      - {desc: 'Abrir o menu ... da tabela', role: button, name: 'Opções de menu, Soma of'}
+      - {desc: 'Exportar para CSV', role: menuitem, name: 'Exportar para CSV'}
+
+    destination: '\\10.10.2.55\planejamento\0. Time Plan - Mis (Lucas,Mikas,Pam e Italo)\02. Mikas\NUBANK\PAGAMENTOS\MAIO\pagamentos_LL_122.xlsx'
+    rename_sheet_to: Planilha1
+    header_row: 1
+    min_rows: 1
+    required_columns: [customer__id, deal_type]
+    # Filtro de tipo: o download precisa ter pelo menos 2 valores distintos em deal_type (senão para, sem publicar)
+    type_column: deal_type
+    min_distinct_types: 2
+    # Linhas que NÃO entram no arquivo (descartadas na conversão do CSV; o log mostra quantas)
+    exclude_rows:
+      deal_type: [not-commissioned]
+    # freshness_column / months_column: preencher depois de ver as colunas do arquivo do LL
+    # (o robô só confere frescor e meses quando essas linhas existem; sem elas, segue normalmente)
+
+# --------------------------------------------------------------------------
+# DAQUI PARA BAIXO NÃO MEXA EM NADA.
+# --------------------------------------------------------------------------
+selectors:
+  account_input:   ['#account-name-input', 'input[name="account-name"]', '#account', 'input[name="account"]']
+  account_submit:  ['#account-name-submit-button', '#next_button']
+  username_input:  ['#username-input', '#username', 'input[name="username"]', 'input[autocomplete="username"]']
+  username_submit: ['#username-submit-button']
+  password_input:  ['#password-input', '#password', 'input[type="password"]']
+  password_submit: ['#password-submit-button', '#signin_button', 'button[type="submit"]']
+  mfa_input:       ['#mfacode', 'input[name="mfaCode"]', 'input[autocomplete="one-time-code"]']
+  mfa_submit:      ['#submitMfa_button', 'button[type="submit"]']
+  login_error:     ['#error_message', '.error-message', '[data-testid="error-message"]']
+  visual_container: ['[data-automation-id="analysis_visual"]', '[data-automation-id*="visual_container"]', '[class*="visual-container"]']
+  visual_menu_button:
+    - '[data-automation-id="analysis_visual_dropdown_menu_button"]'
+    - 'button[aria-label="Menu options"]'
+    - 'button[aria-label="Opções de menu"]'
+    - 'button[aria-label*="enu"]'
+  export_menu_texts:  ['Exportar', 'Export']
+  export_excel_texts: ['Exportar para o Excel', 'Exportar para Excel', 'Export to Excel']
+  export_csv_texts:   ['Exportar para CSV', 'Export to CSV']
+  export_confirm_texts: []
+  loading_indicators: ['[data-automation-id="loading_spinner"]', '[class*="spinner"]', '[role="progressbar"]']

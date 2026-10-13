@@ -1,0 +1,27 @@
+# Sessão do Okta e credenciais
+sessao/
+storage_state.json
+.env
+
+# Ambiente Python
+.venv/
+__pycache__/
+
+# Pastas de trabalho do robô
+logs/
+staging/
+teste_saida/
+backup_producao/
+historico/
+
+# Dados de clientes (ficam só na rede)
+*.xlsx
+*.xls
+*.csv
+data_maxima.json
+
+# Temporários
+*.backup
+*.log
+~$*
+.vscode/
